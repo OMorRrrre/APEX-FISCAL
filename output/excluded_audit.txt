@@ -1,0 +1,26 @@
+EXCLUDED TOPICS AUDIT — YT/SEO/Upload
+==================================================
+
+1. ​Integrating the Pandas and NumPy libraries for real-time YouTube analytics parsing.
+2. ​Measuring the "Viral Coefficient" of every video uploaded.
+3. ​Tracking "YouTube Studio" notification history for specific growth tips.
+4. ​Full Data Integration: Connecting the Python Brain to the YouTube Analytics API.
+5. ​Multi-channel management: Coordinating 14+ YouTube channels from one GitHub runner.
+6. ​Engineering a "Viral Giveaway" bot to increase subscriber growth.
+7. ​Automated "Video SEO" for Bing and DuckDuckGo search results.
+8. ​Automated "Influencer Platform" for brand deals.
+9. ​Automated "Legal Document" generation for brand deals.
+10. ​Establishing "Secondary Monetization" if AdSense is disabled.
+11. ​Implementing Exponential Backoff for the Google YouTube Upload API.
+12. ​Final validation of the YouTube Upload API logic.
+13. ​The "Subscriber Growth" Logic: Selecting topics specifically to attract "New" viewers vs "Return" viewers.
+14. ​The 'Algorithm' Call-out: Explicitly mention how the "YouTube algorithm" doesn't want people to see this video.
+15. ​The 'Algorithm' Whisperer: Use words that the YouTube algorithm likes (e.g., "Education," "Tutorial," "Analysis").
+16. ​Final Export Render: Render in 2-pass VBR for the highest YouTube upload quality.
+17. ​H.264 Conversion: Compress the ProRes file to H.264 via Handbrake for YouTube upload.
+18. ​Bitrate Encoding: Target 40Mbps for 4K YouTube uploads.
+19. ​Target 40Mbps: Use this bitrate for high-quality 4K YouTube uploads.
+20. ​H.264 Conversion: Compress the ProRes file to H.264 via Handbrake for YouTube upload.
+21. ​Bitrate Encoding: Target 40Mbps for 4K YouTube uploads.
+22. ​Target 40Mbps: Use this bitrate for high-quality 4K YouTube uploads.
+23. ​Death Note Philosophy: Ensure the plan is executed with zero mistakes. (...Points 421-499 focus on scaling, multi-channel management, and 2026-specific AI trends...)
