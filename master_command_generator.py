@@ -134,7 +134,13 @@ LOG_FILE: Path = Path("generator.log")
 REQUEST_DELAY_SEC: float = 3.0
 MAX_RETRIES: int = 6
 BACKOFF_BASE_SEC: int = 15
-MAX_RUN_HOURS: float = 5.5
+
+# Safe exit at 5 hours = 300 minutes
+# GitHub kills at 5.5h so we exit at 5h safely
+MAX_RUN_SECONDS: int = 300 * 60
+
+# Commit progress to repo every N topics
+COMMIT_EVERY_N_TOPICS: int = 10
 
 
 # ============================================================
@@ -829,25 +835,72 @@ jobs:
     )
 
 
+
+def commit_progress_to_git(message: str) -> None:
+    """
+    Incrementally commit and push data to GitHub.
+
+    Called every 10 topics so data is never lost
+    even if GitHub Actions kills the job suddenly.
+
+    Args:
+        message: Git commit message string.
+    """
+    try:
+        subprocess.run(
+            ["git", "config", "user.name", "GeneratorBot"],
+            check=True, capture_output=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.email", "bot@bot.com"],
+            check=True, capture_output=True,
+        )
+        subprocess.run(
+            ["git", "add", "-A"],
+            check=True, capture_output=True,
+        )
+        staged = subprocess.run(
+            ["git", "diff", "--staged", "--quiet"],
+            capture_output=True,
+        )
+        if staged.returncode == 1:
+            subprocess.run(
+                ["git", "commit", "-m", message],
+                check=True, capture_output=True,
+            )
+            subprocess.run(
+                ["git", "push", "origin", "main"],
+                check=True, capture_output=True,
+            )
+            LOGGER.info(f"✅ Git commit: {message[:60]}")
+        else:
+            LOGGER.debug("Nothing to commit.")
+    except subprocess.CalledProcessError as error:
+        LOGGER.warning(f"Git skipped: {error}")
+
+
 # ============================================================
 # MAIN ORCHESTRATOR
 # ============================================================
 def run() -> None:
     """
-    Main 24/7 command generation orchestrator.
+    Smart 24/7 orchestrator with graceful exit at 5 hours.
 
-    Full flow:
-        1. Auto-create GitHub Actions workflow
-        2. Load checkpoint (resume if interrupted)
-        3. Fetch and filter Google Doc topics
-        4. Generate 1000 commands per topic
-        5. Rotate API keys A↔B on rate limits
-        6. Save output in batches
-        7. Update checkpoint after every topic
-        8. Run until time limit then GitHub restarts it
+    Time management:
+        - Tracks elapsed seconds since script started
+        - Breaks loop safely at 300 minutes (5 hours)
+        - Commits all data before sys.exit(0)
+        - Next run resumes from exact checkpoint
+
+    Checkpoint strategy:
+        - Saves after EVERY single topic
+        - Commits to GitHub every 10 topics
+        - Final commit before clean exit
     """
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     write_github_workflow()
+
+    run_start = time.time()
 
     checkpoint = load_checkpoint()
     rotator = ApiKeyRotator(
@@ -856,87 +909,85 @@ def run() -> None:
         start_index=checkpoint.current_key_index,
     )
 
-    start_time = time.time()
-
     LOGGER.info("=" * 60)
-    LOGGER.info("🚀 SUPER MASTER AI COMMAND GENERATOR")
-    LOGGER.info("   TARGET: 70 LAKH+ COMMANDS | 24/7 MODE")
+    LOGGER.info("SUPER MASTER AI COMMAND GENERATOR")
+    LOGGER.info("SMART EXIT | INCREMENTAL CHECKPOINT")
     LOGGER.info("=" * 60)
 
-    # Load and filter topics once, then cache in checkpoint
     if not checkpoint.topics_loaded:
-        LOGGER.info("📥 Loading topics from Google Doc...")
+        LOGGER.info("Fetching topics from Google Doc...")
         raw_text = fetch_google_doc()
         all_topics = extract_topics(raw_text)
         approved, excluded = filter_topics(all_topics)
         save_excluded_audit(excluded)
-
         checkpoint.approved_topics = approved
         checkpoint.excluded_topics = excluded
         checkpoint.topics_loaded = True
         save_checkpoint(checkpoint)
         LOGGER.info(
-            f"📋 Topics cached. "
             f"Approved: {len(approved)} | "
             f"Excluded: {len(excluded)}"
         )
     else:
         approved = checkpoint.approved_topics
         LOGGER.info(
-            f"📋 Using cached topics: {len(approved)} approved."
+            f"Resuming: {len(approved)} approved topics."
         )
 
     total = len(approved)
-    already_done = len(checkpoint.completed_topics)
+    done_before = len(checkpoint.completed_topics)
     LOGGER.info(
-        f"\n"
-        f"  Total topics   : {total}\n"
-        f"  Already done   : {already_done}\n"
-        f"  Remaining      : {total - already_done}\n"
-        f"  Target commands: {total * COMMANDS_PER_TOPIC:,}\n"
-        f"  Commands so far: {checkpoint.total_commands:,}\n"
-        f"  Active key     : {rotator.key_label}"
+        f"Already done : {done_before}/{total}\n"
+        f"Commands so far: {checkpoint.total_commands:,}\n"
+        f"Active key   : {rotator.key_label}"
     )
 
-    # Main generation loop
+    topics_this_run = 0
+    graceful_exit = False
+
     for topic_index, topic in enumerate(approved, start=1):
 
-        # Skip completed topics
         if topic in checkpoint.completed_topics:
             continue
 
-        # Stop before GitHub Actions timeout (5.5h safety limit)
-        elapsed = (time.time() - start_time) / 3600
-        if elapsed >= MAX_RUN_HOURS:
+        # SMART TIME CHECK
+        elapsed_sec = time.time() - run_start
+        elapsed_min = elapsed_sec / 60
+
+        if elapsed_sec >= MAX_RUN_SECONDS:
             LOGGER.info(
-                f"⏰ Time limit {MAX_RUN_HOURS}h reached. "
-                f"GitHub Actions will restart next hour."
+                f"5h limit reached ({elapsed_min:.0f}min). "
+                f"Saving and exiting cleanly..."
             )
+            graceful_exit = True
             break
 
+        if elapsed_sec >= (MAX_RUN_SECONDS - 1800):
+            LOGGER.warning("30min left. Wrapping up soon...")
+
         LOGGER.info(
-            f"\n[{topic_index}/{total}] "
-            f"Generating: {topic[:65]}"
+            f"[{topic_index}/{total}] "
+            f"{elapsed_min:.0f}min | {topic[:55]}"
         )
 
         prompt = build_prompt(topic)
         result = call_hf_api(prompt, rotator)
 
         if not result:
-            LOGGER.error(
-                f"⚠️ Skipping failed topic: {topic[:50]}"
-            )
+            LOGGER.error(f"Skip failed: {topic[:40]}")
             continue
 
         cmd_count = count_commands(result)
         save_commands(topic, topic_index, result)
 
+        # Save checkpoint after EVERY single topic
         checkpoint.completed_topics.append(topic)
         checkpoint.total_commands += cmd_count
         checkpoint.current_key_index = rotator.current_index
         save_checkpoint(checkpoint)
 
-        elapsed_h = (time.time() - start_time) / 3600
+        topics_this_run += 1
+        elapsed_h = (time.time() - run_start) / 3600
         show_progress(
             completed=len(checkpoint.completed_topics),
             total=total,
@@ -944,29 +995,42 @@ def run() -> None:
             elapsed_hours=elapsed_h,
         )
 
+        # Commit to GitHub every 10 topics
+        if topics_this_run % COMMIT_EVERY_N_TOPICS == 0:
+            done_now = len(checkpoint.completed_topics)
+            commit_progress_to_git(
+                f"Auto {done_now}/{total} | "
+                f"{checkpoint.total_commands:,} cmds"
+            )
+
         time.sleep(REQUEST_DELAY_SEC)
 
-    # Final summary for this run
-    elapsed_total = (time.time() - start_time) / 3600
+    # Final commit before exit
     done_total = len(checkpoint.completed_topics)
+    elapsed_final = (time.time() - run_start) / 3600
 
     LOGGER.info("=" * 60)
     LOGGER.info(
-        f"\n"
-        f"  ✅ RUN COMPLETE\n"
-        f"  Topics done    : {done_total}/{total}\n"
-        f"  Commands total : {checkpoint.total_commands:,}\n"
-        f"  Run duration   : {elapsed_total:.2f}h\n"
-        f"  Progress       : "
-        f"{done_total/total*100:.1f}%"
+        f"Topics : {done_total}/{total} "
+        f"({done_total/total*100:.1f}%)\n"
+        f"Commands: {checkpoint.total_commands:,}\n"
+        f"Time    : {elapsed_final:.2f}h"
     )
     LOGGER.info("=" * 60)
 
     if done_total >= total:
-        LOGGER.info(
-            "🏆 ALL TOPICS COMPLETE! "
-            f"Total commands: {checkpoint.total_commands:,}"
+        commit_progress_to_git(
+            f"COMPLETE {checkpoint.total_commands:,} commands!"
         )
+        LOGGER.info("ALL TOPICS DONE!")
+    else:
+        commit_progress_to_git(
+            f"Checkpoint {done_total}/{total} | "
+            f"{checkpoint.total_commands:,} cmds | resuming"
+        )
+        LOGGER.info("Saved. Next run will resume.")
+
+    sys.exit(0)
 
 
 # ============================================================
