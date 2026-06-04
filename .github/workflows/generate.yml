@@ -34,14 +34,6 @@ jobs:
           HF_KEY_A: ${{ secrets.HF_KEY_A }}
           HF_KEY_B: ${{ secrets.HF_KEY_B }}
 
-      - name: Commit Output
-        run: |
-          git config user.name "Bot"
-          git config user.email "bot@bot.com"
-          git pull --rebase origin main
-          git add -A
-          git diff --staged --quiet || git commit -m \
-            "Auto [$(date +'%Y-%m-%d %H:%M')]"
-          git push origin main
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      
+
+   
